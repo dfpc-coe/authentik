@@ -83,9 +83,15 @@ func (sb *SessionBinder) Bind(username string, req *bind.Request) (ldap.LDAPResu
 	}
 	sb.log.Debug("No session found for user, executing flow")
 	result, err := sb.DirectBinder.Bind(username, req)
-	// Cache the result, refusals included, whenever the bind itself went
-	// through; a transport error is not an outcome and is never cached.
-	if err == nil {
+	// Only cache the result if the bind actually succeeded. DirectBinder.Bind never
+	// returns a non-nil error for rejected binds (invalid credentials, access denied,
+	// flow execution errors, ...) - it encodes all of those as a non-success
+	// ldap.LDAPResultCode with a nil error. Caching on err == nil alone therefore cached
+	// every outcome, including transient failures (e.g. a bruteforce/rate-limit denial),
+	// which then got served back as a false "authenticated from session" for the
+	// lifetime of the session TTL even once the underlying cause was gone and the
+	// credentials were verified correct again.
+	if err == nil && result == ldap.LDAPResultSuccess {
 		flags := sb.si.GetFlags(req.BindDN)
 		if flags == nil {
 			sb.log.Error("user flags not set after bind")
